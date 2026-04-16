@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Interactive Plus Grid</title>
+<style>
+*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+html, body {
+  width: 100%; height: 100%;
+  overflow: hidden;
+  background: #000;
+  cursor: none;
+}
+
+canvas {
+  position: fixed;
+  top: 0; left: 0;
+  display: block;
+}
+
+.cur-dot {
+  position: fixed;
+  width: 5px; height: 5px;
+  border-radius: 50%;
+  background: #fff;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  z-index: 9999;
+}
+
+.cur-ring {
+  position: fixed;
+  width: 34px; height: 34px;
+  border-radius: 50%;
+  border: 1.5px solid rgba(255,255,255,0.22);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  z-index: 9999;
+  transition: width 0.22s ease, height 0.22s ease, border-color 0.25s ease;
+}
+
+.cur-ring.pressed {
+  width: 52px; height: 52px;
+  border-color: rgba(255,255,255,0.45);
+}
+</style>
+</head>
+<body>
+
+<canvas id="mc"></canvas>
+<div class="cur-dot"  id="cdot"></div>
+<div class="cur-ring" id="cring"></div>
+
+<script>
+const mc    = document.getElementById('mc');
+const mCtx  = mc.getContext('2d');
+const cdot  = document.getElementById('cdot');
+const cring = document.getElementById('cring');
+
+/* ── config ─────────────────────────────────────────────────── */
+const CFG = {
+  spacing : 24,     // grid spacing in px
+  armHalf : 5,      // half-arm length (full arm = 10 px)
+  armW    : 1.4,    // arm stroke width
+  radius  : 100,    // base cursor influence radius
+  baseOp  : 0.07,   // resting opacity
+  sp      : 0.04,   // lerp speed (lower = trail lingers longer)
+};
+
+/* ── state ──────────────────────────────────────────────────── */
+let W, H;
+let mx = -2000, my = -2000;    // smoothed cursor position
+let tmx = -2000, tmy = -2000;  // raw cursor target
+let prevMx = -2000, prevMy = -2000;
+let vx = 0, vy = 0;            // smoothed velocity (px/frame)
+let plusses = [];
+let ripples = [];
+
+/* ── helpers ────────────────────────────────────────────────── */
+const lerp  = (a, b, t) => a + (b - a) * t;
+const ss    = t => t * t * (3 - 2 * t);   // smoothstep
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+
+/* ── grid ───────────────────────────────────────────────────── */
+function setupGrid() {
+  plusses = [];
+  const cols = Math.ceil(W / CFG.spacing) + 2;
+  const rows = Math.ceil(H / CFG.spacing) + 2;
+  const ox = ((W % CFG.spacing) / 2) | 0;
+  const oy = ((H % CFG.spacing) / 2) | 0;
+
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const px = ox + c * CFG.spacing;
+      const py = oy + r * CFG.spacing;
+      // native hue per-grid-position: cyan-blue (left) → violet (right/bottom)
+      const baseHue = 190 + (px / (W || 1)) * 60 + (py / (H || 1)) * 30;
+      plusses.push({
+        x: px, y: py, baseHue,
+        op: CFG.baseOp, hue: baseHue, sat: 0, lit: 100, sc: 1,
+      });
+    }
+  }
+}
+
+function resize() {
+  W = mc.width  = window.innerWidth;
+  H = mc.height = window.innerHeight;
+  setupGrid();
+}
+
+/* ── main loop ──────────────────────────────────────────────── */
+function tick() {
+  /* smooth cursor */
+  mx = lerp(mx, tmx, 0.18);
+  my = lerp(my, tmy, 0.18);
+
+  /* smooth velocity — higher lerp = snappier decay when stopping */
+  const rawVx = mx - prevMx;
+  const rawVy = my - prevMy;
+  prevMx = mx;
+  prevMy = my;
+  const isSlowing = Math.hypot(rawVx, rawVy) < Math.hypot(vx, vy);
+  const vLerp = isSlowing ? 0.14 : 0.28;  // decay slow so trail persists
+  vx = lerp(vx, rawVx, vLerp);
+  vy = lerp(vy, rawVy, vLerp);
+
+  /* normalised velocity direction + strength */
+  const vSpeed = Math.hypot(vx, vy);
+  // power < 1 → activates quickly from rest; /5 threshold → responsive
+  const velMag = Math.pow(clamp(vSpeed / 5, 0, 1), 0.7);
+  const svx = vSpeed > 0.05 ? vx / vSpeed : 0;
+  const svy = vSpeed > 0.05 ? vy / vSpeed : 0;
+
+  /*
+   * Directional influence zone — teardrop / comet shape:
+   *   - Behind cursor (trail): radius grows as speed increases → long tail
+   *   - Ahead of cursor:       radius shrinks as speed increases → sharp nose
+   *   - Perpendicular sides:   slightly narrowed when moving
+   *
+   * When stationary (velMag = 0) all three equal CFG.radius → perfect circle.
+   */
+  const R      = CFG.radius;
+  const Rtrail = lerp(R, R * 3.2,  velMag);   // tail extends dramatically
+  const Rfront = lerp(R, R * 0.15, velMag);   // nose nearly vanishes
+  const Rside  = lerp(R, R * 1.4,  velMag);   // wide trail width
+
+  mCtx.clearRect(0, 0, W, H);
+
+  /* advance ripples */
+  for (const rp of ripples) {
+    rp.r  += rp.speed;
+    rp.op  = Math.max(0, 1 - rp.r / rp.maxR);
+  }
+  for (let i = ripples.length - 1; i >= 0; i--) {
+    if (ripples[i].op <= 0) ripples.splice(i, 1);
+  }
+
+  const { sp, armW, armHalf, baseOp } = CFG;
+
+  for (const p of plusses) {
+    /* vector from cursor to this plus */
+    const dx = p.x - mx;
+    const dy = p.y - my;
+
+    /*
+     * Split into parallel (along velocity) and perpendicular components.
+     *   proj > 0  → plus is ahead of cursor  (in direction of motion)
+     *   proj < 0  → plus is behind cursor     (trail / wake)
+     */
+    const proj  = dx * svx + dy * svy;
+    const perp  = Math.sqrt(Math.max(0, dx * dx + dy * dy - proj * proj));
+
+    /* pick the correct semi-axis for the parallel direction */
+    const Ra    = proj < 0 ? Rtrail : Rfront;
+
+    /* normalised ellipse value: < 1 = inside zone */
+    const ellVal = (proj / Ra) * (proj / Ra) + (perp / Rside) * (perp / Rside);
+
+    let tOp, tHue, tSat, tLit, tSc;
+
+    if (ellVal < 1) {
+      const t  = 1 - Math.sqrt(ellVal);   // 0 at boundary → 1 at cursor
+      const st = ss(t);
+
+      /*
+       * Directional brightness + velocity gate:
+       *   - velMag = 0 (stopped) → intensity = 0, all particles rest at baseOp
+       *   - Trail (behind)  → full intensity
+       *   - Nose  (ahead)   → nearly invisible at speed
+       */
+      const isTrail   = proj <= 0;
+      const dirFactor = isTrail ? 1.0 : lerp(1.0, 0.06, velMag);
+      const intensity = st * dirFactor * velMag;  // gated: zero when stopped
+
+      tOp  = baseOp + intensity * (1 - baseOp);
+      tHue = p.hue;
+      tSat = 0;    // no colour — pure white trail
+      tLit = 100;
+      tSc  = 1 + intensity * 0.5;
+    } else {
+      tOp  = baseOp;
+      tHue = p.hue;   // hold hue while fading so colour doesn't snap
+      tSat = 0;
+      tLit = 100;
+      tSc  = 1;
+    }
+
+    /* ripple edge boost */
+    let rBoost = 0;
+    for (const rp of ripples) {
+      const rdx = p.x - rp.x;
+      const rdy = p.y - rp.y;
+      const rd  = Math.sqrt(rdx * rdx + rdy * rdy);
+      const edgeDist = Math.abs(rd - rp.r);
+      if (edgeDist < 35) {
+        const bt = ss(1 - edgeDist / 35) * rp.op;
+        if (bt > rBoost) rBoost = bt;
+      }
+    }
+
+    /* lerp state */
+    p.op  = lerp(p.op,  tOp,  sp);
+    p.hue = lerp(p.hue, tHue, sp * 2.5);
+    p.sat = lerp(p.sat, tSat, sp);
+    p.lit = lerp(p.lit, tLit, sp);
+    p.sc  = lerp(p.sc,  tSc,  sp * 2);
+
+    /* final display values (include ripple) */
+    const dOp  = clamp(p.op  + rBoost * 0.88, 0, 1);
+    const dSat = clamp(p.sat + rBoost * 80, 0, 100);
+    const dLit = clamp(p.lit + rBoost * 30, 0, 92);
+    const dSc  = p.sc + rBoost * 0.3;
+
+    const hw = (armW * dSc) / 2;
+    const hl = armHalf * dSc;
+
+    mCtx.fillStyle = dSat > 1.5
+      ? `hsla(${p.hue | 0},${dSat | 0}%,${dLit | 0}%,${dOp.toFixed(3)})`
+      : `rgba(255,255,255,${dOp.toFixed(3)})`;
+
+    mCtx.fillRect(p.x - hw, p.y - hl, armW * dSc, hl * 2);
+    mCtx.fillRect(p.x - hl, p.y - hw, hl * 2,     armW * dSc);
+  }
+
+  requestAnimationFrame(tick);
+}
+
+/* ── events ─────────────────────────────────────────────────── */
+function onMove(x, y) {
+  tmx = x; tmy = y;
+  cdot.style.left  = x + 'px';
+  cdot.style.top   = y + 'px';
+  cring.style.left = x + 'px';
+  cring.style.top  = y + 'px';
+}
+
+function spawnRipple(x, y) {
+  ripples.push({ x, y, r: 0, maxR: Math.hypot(W, H) * 0.75, speed: 9, op: 1 });
+}
+
+document.addEventListener('mousemove', e => onMove(e.clientX, e.clientY));
+document.addEventListener('touchmove', e => {
+  e.preventDefault();
+  onMove(e.touches[0].clientX, e.touches[0].clientY);
+}, { passive: false });
+
+document.addEventListener('mousedown', e => {
+  cring.classList.add('pressed');
+  spawnRipple(e.clientX, e.clientY);
+});
+document.addEventListener('mouseup',   () => cring.classList.remove('pressed'));
+document.addEventListener('touchstart', e => spawnRipple(e.touches[0].clientX, e.touches[0].clientY));
+
+window.addEventListener('resize', resize);
+
+resize();
+requestAnimationFrame(tick);
+</script>
+</body>
+</html>
