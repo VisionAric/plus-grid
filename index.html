@@ -69,7 +69,7 @@ const CFG = {
   fontSize: 8,      // base font size — fits snugly at 12 px spacing
   radius  : 100,    // base cursor influence radius
   baseOp  : 0.07,   // resting opacity
-  sp      : 0.018,  // lerp speed (lower = trail lingers longer)
+  sp      : 0.04,   // lerp speed (lower = trail lingers longer)
 };
 
 /* ── state ──────────────────────────────────────────────────── */
@@ -130,8 +130,8 @@ function tick() {
   prevMx = mx;
   prevMy = my;
   const isSlowing = Math.hypot(rawVx, rawVy) < Math.hypot(vx, vy);
-  vx = lerp(vx, rawVx, isSlowing ? 0.05 : 0.28);
-  vy = lerp(vy, rawVy, isSlowing ? 0.05 : 0.28);
+  vx = lerp(vx, rawVx, isSlowing ? 0.14 : 0.28);
+  vy = lerp(vy, rawVy, isSlowing ? 0.14 : 0.28);
 
   /* velocity direction + magnitude */
   const vSpeed = Math.hypot(vx, vy);
