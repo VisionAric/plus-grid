@@ -179,8 +179,9 @@ function tick() {
       const st     = ss(t);
       const isTrail   = proj <= 0;
       const dirFactor = isTrail ? 1.0 : lerp(1.0, 0.06, velMag);
-      intensity = st * dirFactor * velMag;
-      tOp = baseOp + intensity * (1 - baseOp);
+      intensity = st * dirFactor * velMag;        // drives char flicker + zone gate
+      const opI = Math.sqrt(intensity);           // sqrt → reaches 1.0 faster
+      tOp = baseOp + opI * (1 - baseOp);         // full white at centre of trail
     } else {
       intensity = 0;
       tOp = baseOp;
