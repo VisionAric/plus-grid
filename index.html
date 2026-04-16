@@ -69,7 +69,7 @@ const CFG = {
   fontSize: 8,      // base font size — fits snugly at 12 px spacing
   radius  : 100,    // base cursor influence radius
   baseOp  : 0.07,   // resting opacity
-  sp      : 0.04,   // lerp speed (lower = trail lingers longer)
+  sp      : 0.09,   // lerp speed
 };
 
 /* ── state ──────────────────────────────────────────────────── */
@@ -121,8 +121,8 @@ function tick() {
   frame++;
 
   /* smooth cursor */
-  mx = lerp(mx, tmx, 0.18);
-  my = lerp(my, tmy, 0.18);
+  mx = lerp(mx, tmx, 0.35);
+  my = lerp(my, tmy, 0.35);
 
   /* smooth velocity */
   const rawVx = mx - prevMx;
@@ -130,12 +130,12 @@ function tick() {
   prevMx = mx;
   prevMy = my;
   const isSlowing = Math.hypot(rawVx, rawVy) < Math.hypot(vx, vy);
-  vx = lerp(vx, rawVx, isSlowing ? 0.14 : 0.28);
-  vy = lerp(vy, rawVy, isSlowing ? 0.14 : 0.28);
+  vx = lerp(vx, rawVx, isSlowing ? 0.18 : 0.42);
+  vy = lerp(vy, rawVy, isSlowing ? 0.18 : 0.42);
 
   /* velocity direction + magnitude */
   const vSpeed = Math.hypot(vx, vy);
-  const velMag = Math.pow(clamp(vSpeed / 5, 0, 1), 0.7);
+  const velMag = Math.pow(clamp(vSpeed / 4, 0, 1), 0.6);
   const svx = vSpeed > 0.05 ? vx / vSpeed : 0;
   const svy = vSpeed > 0.05 ? vy / vSpeed : 0;
 
